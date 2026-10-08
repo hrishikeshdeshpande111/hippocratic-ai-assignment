@@ -274,7 +274,7 @@ def create_judged_story(
             revision_instructions="\n".join(f"- {item}" for item in result.feedback),
         )
         result = judge_story(client, request, category, story)
-        if result.total > best_result.total:
+        if result.passed or result.total > best_result.total:
             best_story, best_result = story, result
 
     return best_story, best_result, revisions
