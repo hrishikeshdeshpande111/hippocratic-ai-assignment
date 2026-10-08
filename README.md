@@ -47,8 +47,9 @@ answer gets one friendly retry before also defaulting to the first.
 
 The selected path and the unchanged opening are then passed to a separate ending
 prompt. Judge feedback can regenerate that 200-300 word ending at most twice,
-but it can never rewrite the opening the reader already saw. This preserves the
-feeling that the choice mattered while keeping cost and latency bounded.
+but the revision loop can never rewrite the opening the reader already saw.
+This preserves the feeling that the choice mattered while keeping cost and
+latency bounded.
 
 ## Run it
 
