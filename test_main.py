@@ -1,7 +1,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import main
 
@@ -109,6 +109,38 @@ class StoryPipelineTests(unittest.TestCase):
         self.assertEqual(story, "passing rewrite")
         self.assertTrue(result.passed)
         self.assertEqual(revisions, 1)
+
+    def test_interactive_change_is_rewritten_and_rechecked(self):
+        passing = main.JudgeResult(
+            "pass",
+            {
+                "age_appropriateness": 5,
+                "story_arc": 5,
+                "engagement": 5,
+                "category_fit": 5,
+                "safety": 5,
+            },
+            [],
+        )
+        with (
+            patch("main.make_client", return_value=object()),
+            patch("main.route_request", return_value="calm bedtime"),
+            patch("main.create_judged_story", return_value=("draft", passing, 0)),
+            patch("main.generate_story", return_value="friendlier rewrite") as rewrite,
+            patch("main.judge_story", return_value=passing) as recheck,
+            patch("builtins.input", side_effect=[main.EXAMPLE_REQUEST, "make Bob fluffier", ""]),
+            patch("builtins.print"),
+        ):
+            main.run()
+
+        self.assertEqual(rewrite.call_count, 1)
+        self.assertIn("make Bob fluffier", rewrite.call_args.kwargs["revision_instructions"])
+        recheck.assert_called_once_with(
+            ANY,
+            main.EXAMPLE_REQUEST,
+            "calm bedtime",
+            "friendlier rewrite",
+        )
 
 
 if __name__ == "__main__":
