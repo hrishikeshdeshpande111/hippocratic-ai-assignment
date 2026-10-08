@@ -223,7 +223,7 @@ def judge_story(
 - category_fit: matches the {category!r} tone
 - safety: nothing scary, violent, romantic, cruel, or inappropriate
 - choice_honored: the chosen action visibly causes the resolution; score below 4
-  if the same ending could follow either choice
+  only if swapping in the other choice would leave the problem's solution unchanged
 Verdict is pass only if every score is at least 4. For a failure, give concise,
 actionable feedback tied to weak criteria. Return only valid JSON:
 {{"verdict":"pass or fail","scores":{{"age_appropriateness":1,"story_arc":1,
