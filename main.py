@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 
 MODEL = "gpt-3.5-turbo"
@@ -318,7 +318,7 @@ def run() -> None:
 def main() -> int:
     try:
         run()
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OpenAIError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
