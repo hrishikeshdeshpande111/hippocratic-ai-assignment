@@ -15,6 +15,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
+from dotenv import load_dotenv
 from openai import OpenAI, OpenAIError
 
 
@@ -70,6 +71,7 @@ class JudgeResult:
 
 def make_client() -> OpenAI:
     """Create the SDK client without ever printing or logging its credential."""
+    load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError(

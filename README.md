@@ -34,12 +34,13 @@ Python 3.10 or newer is required.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export OPENAI_API_KEY="your-key-here"
+# Paste your key into .env: OPENAI_API_KEY=your-key-here
 python main.py
 ```
 
-The key is read only from `OPENAI_API_KEY`; it is never printed or stored. If the
-initial prompt is left blank, the app uses the included Alice-and-Bob example.
+The key is read from `OPENAI_API_KEY` in your environment or a local `.env` file;
+it is never printed, and `.env` is excluded from Git. If the initial prompt is
+left blank, the app uses the included Alice-and-Bob example.
 
 ## Judge rubric
 
