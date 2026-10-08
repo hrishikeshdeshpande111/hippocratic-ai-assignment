@@ -22,6 +22,21 @@ from openai import OpenAI, OpenAIError
 MODEL = "gpt-3.5-turbo"
 CATEGORIES = ("adventure", "mystery", "funny/silly", "calm bedtime")
 MAX_REVISION_ROUNDS = 2
+EXIT_RESPONSES = {"no", "n", "done", "quit", "exit"}
+SAFETY_ACKNOWLEDGMENT = (
+    "I keep endings gentle for bedtime — here's a wistful one instead."
+)
+SAFETY_TRIGGER_PATTERNS = (
+    r"\bsad\s+(?:ending|tone)\b",
+    r"\bdark\s+(?:ending|tone)\b",
+    r"\bscary\b",
+    r"\bdies?\b",
+    r"\bdeath\b",
+    r"\bhorror\b",
+    r"\bcreepy\b",
+    r"\bfrightening\b",
+    r"\bterrifying\b",
+)
 EXAMPLE_REQUEST = (
     "A story about a girl named Alice and her best friend Bob, "
     "who happens to be a cat."
@@ -132,6 +147,12 @@ def route_request(client: OpenAI, request: str) -> str:
         if category in normalized:
             return category
     return "calm bedtime"
+
+
+def needs_safety_acknowledgment(request: str) -> bool:
+    """Detect requests whose tone the bedtime safety prompt will soften."""
+    normalized = request.casefold()
+    return any(re.search(pattern, normalized) for pattern in SAFETY_TRIGGER_PATTERNS)
 
 
 def generate_story(
@@ -291,6 +312,8 @@ def run() -> None:
 
     category = route_request(client, request)
     print(f"\nRouted as: {category}")
+    if needs_safety_acknowledgment(request):
+        print(SAFETY_ACKNOWLEDGMENT)
     story, result, revisions = create_judged_story(client, request, category)
     print(f"Judge: {result.summary()} (automatic revisions: {revisions})")
 
@@ -300,7 +323,7 @@ def run() -> None:
             "Want any changes? (e.g., 'make the dragon friendlier') "
             "or press Enter to finish. "
         ).strip()
-        if not change:
+        if not change or change.casefold() in EXIT_RESPONSES:
             print("Good night!")
             return
 

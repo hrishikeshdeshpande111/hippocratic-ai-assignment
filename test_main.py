@@ -1,7 +1,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, call, patch
 
 import main
 
@@ -141,6 +141,79 @@ class StoryPipelineTests(unittest.TestCase):
             "calm bedtime",
             "friendlier rewrite",
         )
+
+    def test_exit_responses_finish_without_rewrite(self):
+        passing = main.JudgeResult(
+            "pass",
+            {
+                "age_appropriateness": 5,
+                "story_arc": 5,
+                "engagement": 5,
+                "category_fit": 5,
+                "safety": 5,
+            },
+            [],
+        )
+        for response in ("no", "N", "done", "quit", "exit", ""):
+            with self.subTest(response=response):
+                with (
+                    patch("main.make_client", return_value=object()),
+                    patch("main.route_request", return_value="calm bedtime"),
+                    patch(
+                        "main.create_judged_story",
+                        return_value=("draft", passing, 0),
+                    ),
+                    patch("main.generate_story") as rewrite,
+                    patch(
+                        "builtins.input",
+                        side_effect=[main.EXAMPLE_REQUEST, response],
+                    ),
+                    patch("builtins.print") as output,
+                ):
+                    main.run()
+
+                rewrite.assert_not_called()
+                output.assert_any_call("Good night!")
+
+    def test_safety_override_acknowledgment_prints_only_for_trigger(self):
+        passing = main.JudgeResult(
+            "pass",
+            {
+                "age_appropriateness": 5,
+                "story_arc": 5,
+                "engagement": 5,
+                "category_fit": 5,
+                "safety": 5,
+            },
+            [],
+        )
+        for request, should_acknowledge in (
+            ("A fox story with a sad ending", True),
+            ("A cozy fox story under the stars", False),
+        ):
+            with self.subTest(request=request):
+                with (
+                    patch("main.make_client", return_value=object()),
+                    patch("main.route_request", return_value="calm bedtime"),
+                    patch(
+                        "main.create_judged_story",
+                        return_value=("draft", passing, 0),
+                    ),
+                    patch("builtins.input", side_effect=[request, ""]),
+                    patch("builtins.print") as output,
+                ):
+                    main.run()
+
+                acknowledgment = call(main.SAFETY_ACKNOWLEDGMENT)
+                if should_acknowledge:
+                    routed = call("\nRouted as: calm bedtime")
+                    routed_index = output.call_args_list.index(routed)
+                    self.assertEqual(
+                        output.call_args_list[routed_index + 1], acknowledgment
+                    )
+                    self.assertEqual(output.call_args_list.count(acknowledgment), 1)
+                else:
+                    self.assertNotIn(acknowledgment, output.call_args_list)
 
 
 if __name__ == "__main__":
