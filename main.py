@@ -1,4 +1,4 @@
-"""A routed, judge-guided bedtime story generator.
+"""A routed, judge-guided interactive bedtime story generator.
 
 With two more hours, I would add a small golden-set evaluation harness so prompt
 changes could be compared instead of guessed at. I would also add persistent
@@ -37,6 +37,10 @@ SAFETY_TRIGGER_PATTERNS = (
     r"\bfrightening\b",
     r"\bterrifying\b",
 )
+DEFAULT_CHOICES = (
+    "Ask a friendly helper for advice.",
+    "Look nearby for a clever, gentle solution.",
+)
 EXAMPLE_REQUEST = (
     "A story about a girl named Alice and her best friend Bob, "
     "who happens to be a cat."
@@ -58,6 +62,44 @@ CATEGORY_GUIDANCE = {
     "calm bedtime": (
         "Use soft sensory details, slower pacing, and soothing vocabulary. Let "
         "the energy gradually settle into a cozy, sleepy ending."
+    ),
+}
+
+OPENING_CATEGORY_GUIDANCE = {
+    "adventure": (
+        "Launch a colorful quest with teamwork and mild, non-frightening stakes. "
+        "Stop when the hero must choose how to move the quest forward."
+    ),
+    "mystery": (
+        "Plant two fair, concrete clues and build curiosity rather than fear. "
+        "Stop before the clues are explained."
+    ),
+    "funny/silly": (
+        "Build a harmless comic problem with wordplay or repetition. Stop where "
+        "two different actions could each create a satisfying comic payoff."
+    ),
+    "calm bedtime": (
+        "Use soft sensory detail, low stakes, and unhurried pacing. Make the "
+        "decision interesting without disrupting the cozy mood."
+    ),
+}
+
+ENDING_CATEGORY_GUIDANCE = {
+    "adventure": (
+        "Let the chosen action demonstrate courage or teamwork, then bring "
+        "everyone safely home."
+    ),
+    "mystery": (
+        "Use the chosen action to connect the planted clues and reveal a gentle, "
+        "satisfying explanation."
+    ),
+    "funny/silly": (
+        "Let the chosen action pay off an earlier joke or comic pattern without "
+        "making anyone the target of cruelty."
+    ),
+    "calm bedtime": (
+        "Let the chosen action unfold softly, then gradually settle the energy "
+        "into a cozy, sleepy final image."
     ),
 }
 
@@ -155,6 +197,179 @@ def needs_safety_acknowledgment(request: str) -> bool:
     return any(re.search(pattern, normalized) for pattern in SAFETY_TRIGGER_PATTERNS)
 
 
+def generate_opening(client: OpenAI, request: str, category: str) -> str:
+    """Write only the setup and complication, ending with a hidden dilemma."""
+    system_prompt = f"""You create interactive bedtime adventures for ages 5-10.
+
+Write ONLY the setup and complication. The story body before the DECISION line
+must be 200-300 words; aim for about 250 words across 4-6 natural prose
+paragraphs. Begin with a specific sensory detail, quickly introduce a likable
+main character and their want, then let one surprising but non-frightening
+problem grow naturally from the user's details. Stop at a meaningful decision
+where either of two safe actions could move the story forward. Do not solve the
+problem, hint at an ending, list choices, or write events after the decision.
+Do not use headings or structural labels such as "Setup" or "Complication."
+
+Use clear, mostly simple sentences. Include no violence, cruelty, romance,
+frightening imagery, or unsafe behavior. Preserve the user's names, animals,
+setting, and other concrete details.
+
+The routed style is {category}. {OPENING_CATEGORY_GUIDANCE[category]}
+
+Finish with a separate final line in exactly this format:
+DECISION: <one sentence describing what the main character must decide>
+
+The DECISION line is metadata for another agent. Do not refer to that label in
+the story. Return only the opening and the required final line."""
+    return call_model(
+        client,
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Story request:\n{request}"},
+        ],
+        temperature=0.8,
+        max_tokens=700,
+    )
+
+
+def split_opening_decision(opening: str) -> tuple[str, str]:
+    """Remove DECISION metadata from an opening and return its dilemma."""
+    story_lines: list[str] = []
+    dilemma = "How should the main character solve the problem?"
+    for line in opening.splitlines():
+        match = re.match(r"^\s*DECISION:\s*(.+?)\s*$", line, flags=re.I)
+        if match:
+            dilemma = match.group(1)
+        else:
+            story_lines.append(line)
+    return "\n".join(story_lines).strip(), dilemma
+
+
+def generate_choices(client: OpenAI, opening: str, category: str) -> list[str]:
+    """Generate exactly two safe paths, falling back if JSON is malformed."""
+    prompt = f"""Create two choices for a child reading an interactive story.
+
+The choices must respond directly to the final DECISION dilemma, be clearly
+different in approach (not paraphrases), and give the hero meaningful agency.
+Both must be safe, kind, plausible in the story, and capable of leading to a
+gentle resolution. Use active language a 5-10 year old understands. Each choice
+must be one short sentence and must not reveal what happens afterward. Match the
+{category!r} tone.
+
+Return only valid JSON in exactly this shape:
+{{"choices": ["First choice.", "Second choice."]}}
+
+Opening and dilemma:
+{opening}"""
+    raw = call_model(
+        client,
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You design delightful, safe choices for children's stories."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.7,
+        max_tokens=100,
+        json_mode=True,
+    )
+    try:
+        choices = _parse_json_object(raw).get("choices")
+        if (
+            not isinstance(choices, list)
+            or len(choices) != 2
+            or not all(
+                isinstance(choice, str) and choice.strip() for choice in choices
+            )
+        ):
+            raise ValueError("choices must contain exactly two non-empty strings")
+        cleaned = [choice.strip() for choice in choices]
+        if cleaned[0].casefold() == cleaned[1].casefold():
+            raise ValueError("choices must be distinct")
+        return cleaned
+    except (json.JSONDecodeError, ValueError):
+        return list(DEFAULT_CHOICES)
+
+
+def infer_hero(request: str) -> str:
+    """Find a supplied character name for the choice prompt when possible."""
+    match = re.search(r"\bnamed\s+([A-Z][A-Za-z'-]*)", request)
+    return match.group(1) if match else "the hero"
+
+
+def prompt_for_choice(hero: str, choices: list[str]) -> str | None:
+    """Collect one of two paths; return None when the reader wants to finish."""
+    print(f"\nWhat should {hero} do?")
+    print(f"  1. {choices[0]}")
+    print(f"  2. {choices[1]}")
+
+    answer = input("Pick 1 or 2 (or press Enter for 1): ").strip().casefold()
+    if answer in EXIT_RESPONSES:
+        return None
+    if answer in ("", "1"):
+        return choices[0]
+    if answer == "2":
+        return choices[1]
+
+    print("Please choose 1 or 2.")
+    answer = input("Pick 1 or 2 (or press Enter for 1): ").strip().casefold()
+    if answer in EXIT_RESPONSES:
+        return None
+    return choices[1] if answer == "2" else choices[0]
+
+
+def generate_ending(
+    client: OpenAI,
+    opening: str,
+    choice: str,
+    request: str,
+    category: str,
+    *,
+    previous_ending: str | None = None,
+    revision_instructions: str | None = None,
+) -> str:
+    """Continue the fixed opening and resolve the reader's chosen path."""
+    system_prompt = f"""You complete interactive bedtime stories for ages 5-10.
+
+Write ONLY the continuation and gentle resolution. Write 200-300 words and aim
+for about 250. Continue directly from the supplied opening without recapping
+it. Make the reader's chosen action cause what happens next; show a small
+consequence, discovery, or act of teamwork that could not belong to the other
+path. Resolve the central complication clearly, echo one concrete detail from
+the opening, and finish with a warm final image that feels satisfying at
+bedtime. Use natural prose without structural headings or labels.
+
+Use clear, mostly simple sentences. Include no scary or violent content,
+romance, cruelty, or unsafe behavior. Keep the ending positive and emotionally
+reassuring. Do not offer another choice and do not mention prompts or agents.
+
+The routed style is {category}. {ENDING_CATEGORY_GUIDANCE[category]}"""
+    user_parts = [
+        f"Original request:\n{request}",
+        f"Opening (do not rewrite it):\n{opening}",
+        f"Reader's chosen path (honor it visibly):\n{choice}",
+    ]
+    if previous_ending:
+        user_parts.append(f"Ending to improve:\n{previous_ending}")
+    if revision_instructions:
+        user_parts.append(
+            "Required editor feedback (revise only the ending):\n"
+            f"{revision_instructions}"
+        )
+    return call_model(
+        client,
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "\n\n".join(user_parts)},
+        ],
+        temperature=0.8,
+        max_tokens=700,
+    )
+
+
 def generate_story(
     client: OpenAI,
     request: str,
@@ -205,12 +420,16 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.I)
     value = json.loads(cleaned)
     if not isinstance(value, dict):
-        raise ValueError("judge output was not a JSON object")
+        raise ValueError("model output was not a JSON object")
     return value
 
 
 def judge_story(
-    client: OpenAI, request: str, category: str, story: str
+    client: OpenAI,
+    request: str,
+    category: str,
+    story: str,
+    chosen_path: str = "No explicit reader choice was supplied.",
 ) -> JudgeResult:
     """Score a draft consistently and return specific revision guidance."""
     rubric_keys = (
@@ -219,6 +438,7 @@ def judge_story(
         "engagement",
         "category_fit",
         "safety",
+        "choice_honored",
     )
     prompt = f"""Evaluate the story against the request and routed category.
 
@@ -228,15 +448,21 @@ Score each criterion from 1 (poor) to 5 (excellent):
 3. engagement: vivid, fun, and likely to hold a child's attention
 4. category_fit: the story matches the {category!r} tone
 5. safety: nothing scary, violent, romantic, cruel, or inappropriate
+6. choice_honored: the chosen action visibly causes the resolution; do not award
+   4 or 5 if the ending could follow either choice unchanged
 
 Verdict is "pass" only when every score is at least 4; otherwise it is "fail".
 For a failure, feedback must contain concise, actionable edits tied to weak
 criteria. For a pass, feedback may be empty. Return only this JSON shape:
 {{"verdict":"pass or fail","scores":{{"age_appropriateness":1,"story_arc":1,
-"engagement":1,"category_fit":1,"safety":1}},"feedback":["specific edit"]}}
+"engagement":1,"category_fit":1,"safety":1,"choice_honored":1}},
+"feedback":["specific edit"]}}
 
 Original request:
 {request}
+
+Reader's chosen path:
+{chosen_path}
 
 Story:
 {story}"""
@@ -279,24 +505,32 @@ Story:
 
 
 def create_judged_story(
-    client: OpenAI, request: str, category: str
+    client: OpenAI,
+    request: str,
+    category: str,
+    opening: str,
+    choice: str,
 ) -> tuple[str, JudgeResult, int]:
-    """Draft and revise at most twice, retaining the highest-scoring version."""
-    story = generate_story(client, request, category)
-    result = judge_story(client, request, category, story)
+    """Generate and revise only the ending, retaining the strongest full story."""
+    ending = generate_ending(client, opening, choice, request, category)
+    story = f"{opening}\n\n{ending}"
+    result = judge_story(client, request, category, story, choice)
     best_story, best_result = story, result
     revisions = 0
 
     while not result.passed and revisions < MAX_REVISION_ROUNDS:
         revisions += 1
-        story = generate_story(
+        ending = generate_ending(
             client,
+            opening,
+            choice,
             request,
             category,
-            previous_story=story,
+            previous_ending=ending,
             revision_instructions="\n".join(f"- {item}" for item in result.feedback),
         )
-        result = judge_story(client, request, category, story)
+        story = f"{opening}\n\n{ending}"
+        result = judge_story(client, request, category, story, choice)
         if result.passed or result.total > best_result.total:
             best_story, best_result = story, result
 
@@ -314,11 +548,30 @@ def run() -> None:
     print(f"\nRouted as: {category}")
     if needs_safety_acknowledgment(request):
         print(SAFETY_ACKNOWLEDGMENT)
-    story, result, revisions = create_judged_story(client, request, category)
+
+    raw_opening = generate_opening(client, request, category)
+    opening, dilemma = split_opening_decision(raw_opening)
+    choices = generate_choices(
+        client,
+        f"{opening}\n\nDECISION: {dilemma}",
+        category,
+    )
+    print(f"\n{opening}\n")
+    choice = prompt_for_choice(infer_hero(request), choices)
+    if choice is None:
+        print("Good night!")
+        return
+
+    story, result, revisions = create_judged_story(
+        client, request, category, opening, choice
+    )
     print(f"Judge: {result.summary()} (automatic revisions: {revisions})")
 
+    # The opening was already shown before the choice; reveal only its conclusion.
+    ending = story.removeprefix(opening).strip()
+    print(f"\n{ending}\n")
+
     while True:
-        print(f"\n{story}\n")
         change = input(
             "Want any changes? (e.g., 'make the dragon friendlier') "
             "Type 'no' or press Enter to finish. "
@@ -334,10 +587,11 @@ def run() -> None:
             previous_story=story,
             revision_instructions=f"The user requested this change: {change}",
         )
-        result = judge_story(client, request, category, story)
+        result = judge_story(client, request, category, story, choice)
         print(f"\nJudge: {result.summary()}")
         if result.feedback:
             print("Editor note: " + " ".join(result.feedback))
+        print(f"\n{story}\n")
 
 
 def main() -> int:
