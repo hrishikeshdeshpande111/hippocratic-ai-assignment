@@ -220,6 +220,7 @@ class StoryPipelineTests(unittest.TestCase):
         passing = passing_result()
         for request, should_acknowledge in (
             ("A fox story with a sad ending", True),
+            ("A sad story about a little robot", True),
             ("A cozy fox story under the stars", False),
         ):
             with self.subTest(request=request):
@@ -274,6 +275,36 @@ class StoryPipelineTests(unittest.TestCase):
                     "adventure",
                 )
                 self.assertEqual(choices, list(main.DEFAULT_CHOICES))
+
+    def test_choice_prompt_uses_placeholders_not_concrete_examples(self):
+        with patch(
+            "main.call_model",
+            return_value='{"choices": ["Climb.", "Wait."]}',
+        ) as model:
+            main.generate_choices(object(), "An opening.", "adventure")
+
+        prompt = model.call_args.args[1][1]["content"]
+        self.assertIn("<first choice>", prompt)
+        self.assertNotIn("Follow the lights", prompt)
+        self.assertNotIn("Ask the owl", prompt)
+
+    def test_change_hint_uses_available_story_elements(self):
+        with patch("main.random.choice", side_effect=lambda choices: choices[0]):
+            creature_hint = main.build_change_hint("Mina", "A dragon waved.")
+            hero_hint = main.build_change_hint("Mina", "The path glowed.")
+
+        self.assertIn("dragon", creature_hint)
+        self.assertIn("Mina", hero_hint)
+        self.assertNotIn("dragon", hero_hint)
+        self.assertNotRegex(hero_hint, r"\{.+\}")
+
+    def test_change_hint_varies_for_same_opening(self):
+        main.random.seed(7)
+        hints = {
+            main.build_change_hint("Mina", "Mina met a rabbit.")
+            for _ in range(12)
+        }
+        self.assertGreater(len(hints), 1)
 
     def test_empty_and_invalid_choice_default_to_first(self):
         choices = ["Follow the fireflies.", "Ask the owl."]

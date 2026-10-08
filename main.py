@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import sys
 from dataclasses import dataclass
@@ -21,11 +22,15 @@ RUBRIC = ("age_appropriateness", "story_arc", "engagement", "category_fit",
           "safety", "choice_honored")
 MAX_REVISION_ROUNDS = 2
 EXIT_RESPONSES = {"no", "n", "done", "quit", "exit"}
-SAFETY_TRIGGERS = (r"\bsad\s+(?:ending|tone)\b", r"\bdark\s+(?:ending|tone)\b",
+SAFETY_TRIGGERS = (r"\bsad\b", r"\bdark\s+(?:ending|tone)\b",
                    r"\b(?:scary|dies?|death|horror|creepy|frightening|terrifying)\b")
 SAFETY_ACKNOWLEDGMENT = "I keep endings gentle for bedtime — here's a wistful one instead."
 DEFAULT_CHOICES = ("Ask a friendly helper for advice.",
                    "Look nearby for a clever, gentle solution.")
+CHANGE_HINT_TEMPLATES = (
+    "make the {creature} friendlier", "give {hero} a new friend",
+    "add a silly surprise for {hero}", "make the ending even cozier",
+)
 EXAMPLE_REQUEST = "A story about a girl named Alice and her best friend Bob, who is a cat."
 STYLE_GUIDANCE = {
     "adventure": "Use a colorful quest, teamwork, and mild, non-frightening stakes.",
@@ -76,19 +81,10 @@ def call_model(client: OpenAI, messages: list[dict[str, str]], temperature: floa
 
 
 def route_request(client: OpenAI, request: str) -> str:
-    category = call_model(
-        client,
-        [
-            {
-                "role": "system",
-                "content": "Reply with exactly one label: adventure, mystery, "
-                "funny/silly, or calm bedtime.",
-            },
-            {"role": "user", "content": request},
-        ],
-        0.0,
-        10,
-    ).lower().rstrip(".")
+    instruction = "Reply with one label: adventure, mystery, funny/silly, or calm bedtime."
+    messages = [{"role": "system", "content": instruction},
+                {"role": "user", "content": request}]
+    category = call_model(client, messages, 0.0, 10).lower().rstrip(".")
     return next((item for item in CATEGORIES if item in category), "calm bedtime")
 
 
@@ -104,12 +100,9 @@ Style: {category}. {STYLE_GUIDANCE[category]}
 End with exactly two non-story lines in this form:
 DECISION: <one sentence describing what the hero must decide>\nHERO: <the hero's name>
 Do not add a metadata heading. Return only the opening and these two lines."""
-    return call_model(
-        client,
-        [{"role": "system", "content": prompt}, {"role": "user", "content": request}],
-        0.8,
-        700,
-    )
+    messages = [{"role": "system", "content": prompt},
+                {"role": "user", "content": request}]
+    return call_model(client, messages, 0.8, 700)
 
 
 def generate_choices(client: OpenAI, opening: str, category: str) -> list[str]:
@@ -118,18 +111,12 @@ They must directly answer the DECISION, use clearly different approaches, and
 give the hero meaningful agency. Both must be safe, kind, plausible, leadable to
 a gentle resolution, and simple enough for ages 5-10. Start each with a verb;
 do not number or label them, reveal outcomes, or break the {category!r} tone.
-Return only valid JSON: {{"choices": ["Follow the lights.", "Ask the owl."]}}
+Return only valid JSON in this shape: {{"choices": ["<first choice>", "<second choice>"]}}.
+Invent both choices yourself; never output the placeholder text.
 {opening}"""
-    raw = call_model(
-        client,
-        [
-            {"role": "system", "content": "Design delightful, safe story choices."},
-            {"role": "user", "content": prompt},
-        ],
-        0.7,
-        100,
-        True,
-    )
+    messages = [{"role": "system", "content": "Design delightful, safe choices."},
+                {"role": "user", "content": prompt}]
+    raw = call_model(client, messages, 0.7, 100, True)
     try:
         choices = json.loads(raw).get("choices")
         if not isinstance(choices, list) or len(choices) != 2:
@@ -157,6 +144,15 @@ def prompt_for_choice(hero: str, choices: list[str]) -> str | None:
         if attempt == 0:
             print("Please choose 1 or 2.")
     return choices[0]
+
+
+def build_change_hint(hero: str, opening: str) -> str:
+    pattern = r"\b(dragon|cat|dog|rabbit|fox|owl|unicorn|bear|wolf|mouse|bird|dinosaur)\b"
+    creature = re.search(pattern, opening, re.I)
+    templates = [item for item in CHANGE_HINT_TEMPLATES
+                 if creature or "{creature}" not in item]
+    return random.choice(templates).format(hero=hero,
+                                            creature=creature.group(1) if creature else "")
 
 
 def generate_ending(
@@ -298,11 +294,12 @@ def run() -> None:
     raw_opening = generate_opening(client, request, category)
     match = re.search(r"(?im)^\s*DECISION:\s*(.+?)\s*$", raw_opening)
     dilemma = match.group(1) if match else "How should the hero solve the problem?"
-    hero = re.search(r"(?im)^\s*HERO:\s*(.+?)\s*$", raw_opening)
+    hero_match = re.search(r"(?im)^\s*HERO:\s*(.+?)\s*$", raw_opening)
+    hero = hero_match.group(1) if hero_match else "the hero"
     opening = re.sub(r"(?im)^\s*(?:metadata:|(?:DECISION|HERO):\s*.+?)\s*$", "", raw_opening).strip()
     choices = generate_choices(client, f"{opening}\n\nDECISION: {dilemma}", category)
     print(f"\n{opening}\n")
-    choice = prompt_for_choice(hero.group(1) if hero else "the hero", choices)
+    choice = prompt_for_choice(hero, choices)
     if choice is None:
         print("Good night!")
         return
@@ -313,8 +310,9 @@ def run() -> None:
     print(f"Judge: {result.summary()} (automatic revisions: {revisions})")
     print(f"\n{story.removeprefix(opening).strip()}\n")
     while True:
+        hint = build_change_hint(hero, opening)
         change = input(
-            "Want any changes? (e.g., 'make the dragon friendlier') "
+            f"Want any changes? (e.g., '{hint}') "
             "Type 'no' or press Enter to finish. "
         ).strip()
         if not change or change.casefold() in EXIT_RESPONSES:
