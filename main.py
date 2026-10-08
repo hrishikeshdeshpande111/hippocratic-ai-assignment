@@ -1,5 +1,4 @@
 """A routed, judge-guided interactive bedtime story generator.
-
 With two more hours, I would add golden-set evals, persistent character memory,
 streaming, and parent-facing reading-level and content-safety signals."""
 
@@ -102,9 +101,9 @@ decision with two possible safe actions. Do not solve the problem, list choices,
 or use headings such as Setup or Complication. Preserve supplied names, animals,
 and settings. Include no violence, cruelty, romance, fear, or unsafe behavior.
 Style: {category}. {STYLE_GUIDANCE[category]}
-End with exactly one non-story line in this form:
-DECISION: <one sentence describing what the hero must decide>
-Do not add a metadata heading. Return only the opening and DECISION line."""
+End with exactly two non-story lines in this form:
+DECISION: <one sentence describing what the hero must decide>\nHERO: <the hero's name>
+Do not add a metadata heading. Return only the opening and these two lines."""
     return call_model(
         client,
         [{"role": "system", "content": prompt}, {"role": "user", "content": request}],
@@ -173,7 +172,9 @@ def generate_ending(
 of this bedtime story for ages 5-10. Continue without recapping. The chosen action
 must visibly cause a consequence, discovery, or act of teamwork unique to its
 path. Resolve the central problem, echo one opening detail, and end on a warm
-image. Use natural, simple prose with no headings, new choice, violence, fear,
+image. Do not introduce new characters, treasures, or subplots — the resolution
+must be caused by the chosen action, and the final image must reference it.
+Use natural, simple prose with no headings, new choice, violence, fear,
 romance, cruelty, unsafe behavior, or prompt discussion.
 Style: {category}. {STYLE_GUIDANCE[category]}"""
     context = [
@@ -297,11 +298,11 @@ def run() -> None:
     raw_opening = generate_opening(client, request, category)
     match = re.search(r"(?im)^\s*DECISION:\s*(.+?)\s*$", raw_opening)
     dilemma = match.group(1) if match else "How should the hero solve the problem?"
-    opening = re.sub(r"(?im)^\s*(?:metadata:|DECISION:\s*.+?)\s*$", "", raw_opening).strip()
+    hero = re.search(r"(?im)^\s*HERO:\s*(.+?)\s*$", raw_opening)
+    opening = re.sub(r"(?im)^\s*(?:metadata:|(?:DECISION|HERO):\s*.+?)\s*$", "", raw_opening).strip()
     choices = generate_choices(client, f"{opening}\n\nDECISION: {dilemma}", category)
     print(f"\n{opening}\n")
-    name = re.search(r"\bnamed\s+([A-Z][A-Za-z'-]*)", request)
-    choice = prompt_for_choice(name.group(1) if name else "the hero", choices)
+    choice = prompt_for_choice(hero.group(1) if hero else "the hero", choices)
     if choice is None:
         print("Good night!")
         return

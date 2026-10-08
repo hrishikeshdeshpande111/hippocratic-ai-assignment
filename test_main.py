@@ -376,6 +376,25 @@ class StoryPipelineTests(unittest.TestCase):
         self.assertIn("Alice reached the moonlit fork.", displayed)
         create_story.assert_not_called()
 
+    def test_hero_metadata_names_the_choice_prompt(self):
+        with (
+            patch("main.make_client", return_value=object()),
+            patch("main.route_request", return_value="adventure"),
+            patch(
+                "main.generate_opening",
+                return_value="An opening.\nDECISION: Which way?\nHERO: Finn",
+            ),
+            patch("main.generate_choices", return_value=["Go left", "Go right"]),
+            patch("main.create_judged_story"),
+            patch("builtins.input", side_effect=["A forest story", "exit"]),
+            patch("builtins.print") as output,
+        ):
+            main.run()
+
+        output.assert_any_call(
+            "\nWhat should Finn do?\n  1. Go left\n  2. Go right"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
