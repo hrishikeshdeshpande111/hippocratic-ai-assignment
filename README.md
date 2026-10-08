@@ -66,6 +66,7 @@ python main.py
 The key is read from `OPENAI_API_KEY` in your environment or a local `.env` file;
 it is never printed, and `.env` is excluded from Git. If the initial prompt is
 left blank, the app uses the included Alice-and-Bob example.
+At startup, enter the listener's age from 5-10, or press Enter to default to 7.
 
 At the decision point, pick `1` or `2`; Enter picks `1`. Finish words may also be
 used there to stop gracefully. After the resolution appears, type a genuine
@@ -81,7 +82,8 @@ python -m unittest -v
 
 ## Judge rubric
 
-The judge runs at temperature `0.1` and returns JSON with a 1-5 score for:
+The judge runs at temperature `0.1` and returns JSON with a 1-5 score for the
+specific listener age on:
 
 1. Age appropriateness
 2. Complete story arc
