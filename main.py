@@ -1,6 +1,9 @@
 """A routed, judge-guided interactive bedtime story generator.
-With two more hours, I would add golden-set evals, persistent character memory,
-streaming, and parent-facing reading-level and content-safety signals."""
+With two more hours, I would grade a set of sample stories myself to check
+against the judge and evaluate it better, create persistent memory so that the
+app can remember characters across nights, show parents a quick note on reading
+difficulty of the story and its content, and add cleaner UI/UX to the CLI with
+loading animations, colored story text, and friendlier prompts."""
 
 from __future__ import annotations
 
