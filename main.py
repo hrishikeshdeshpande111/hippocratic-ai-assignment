@@ -90,8 +90,8 @@ def make_client() -> OpenAI:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "OPENAI_API_KEY is not set. Export it in your shell, then run "
-            "`python main.py` again."
+            "OPENAI_API_KEY is not set. Add it to `.env` or export it in your "
+            "shell, then run `python main.py` again."
         )
     return OpenAI(api_key=api_key)
 
@@ -321,7 +321,7 @@ def run() -> None:
         print(f"\n{story}\n")
         change = input(
             "Want any changes? (e.g., 'make the dragon friendlier') "
-            "or press Enter to finish. "
+            "Type 'no' or press Enter to finish. "
         ).strip()
         if not change or change.casefold() in EXIT_RESPONSES:
             print("Good night!")

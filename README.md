@@ -4,18 +4,22 @@ This command-line app turns a short request into a safe, five-minute story for
 ages 5-10. It uses `gpt-3.5-turbo` throughout: a lightweight router selects a
 storytelling style, a storyteller writes the draft, and an independent judge
 either approves it or returns concrete revision notes. The reader can then ask
-for changes until the story feels right.
+for changes until the story feels right. If a request asks for a dark or scary
+tone that the bedtime rules will soften, the app says so before generating.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
     U[User] -->|story request| R[Category Router]
-    R -->|category label + request| S[Storyteller]
+    R -->|category label + request| C{Safety override<br/>keywords present?}
+    C -->|yes| A[Acknowledge gentle override]
+    A -->|request + category| S[Storyteller]
+    C -->|no| S
     S -->|story draft| J[LLM Judge]
     J -->|pass or best after max 2 revisions| O[Show Story to User]
     J -->|fail: verdict + actionable feedback<br/>max 2 rounds| S
-    O -->|press Enter: accept| E[Finish]
+    O -->|Enter, no, n, done, quit, or exit| E[Finish]
     O -->|change request + current story| S2[Storyteller Rewrite]
     S2 -->|revised story| J2[LLM Judge Re-check]
     J2 -->|verdict + scores + revised story| O
@@ -34,13 +38,24 @@ Python 3.10 or newer is required.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-# Paste your key into .env: OPENAI_API_KEY=your-key-here
+cp .env.example .env
+# Open .env and paste your key after OPENAI_API_KEY=
 python main.py
 ```
 
 The key is read from `OPENAI_API_KEY` in your environment or a local `.env` file;
 it is never printed, and `.env` is excluded from Git. If the initial prompt is
 left blank, the app uses the included Alice-and-Bob example.
+
+After a story appears, type a genuine change request to rewrite and re-check it.
+Press Enter or type `no`, `n`, `done`, `quit`, or `exit` (in any letter case) to
+finish without another model call.
+
+## Test it
+
+```bash
+python -m unittest -v
+```
 
 ## Judge rubric
 
@@ -68,3 +83,6 @@ passes, the highest-scoring draft is shown rather than spending without limit.
   control flow depend on a machine-checkable rubric, not free-form praise.
 - **Human in the loop:** a reader's change request is applied to the current
   story, then judged again before it is shown.
+- **Transparent safety overrides:** a deterministic local keyword check explains
+  when dark, scary, or sad requests will be softened. It adds no model call and
+  does not change the judge rubric.
