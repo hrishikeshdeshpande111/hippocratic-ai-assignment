@@ -1,50 +1,69 @@
-# Hippocratic AI Coding Assignment
-Welcome to the [Hippocratic AI](https://www.hippocraticai.com) coding assignment
+# Judge-Guided Bedtime Stories
 
-## Instructions
-The attached code is a simple python script skeleton. Your goal is to take any simple bedtime story request and use prompting to tell a story appropriate for ages 5 to 10.
-- Incorporate a LLM judge to improve the quality of the story
-- Provide a block diagram of the system you create that illustrates the flow of the prompts and the interaction between judge, storyteller, user, and any other components you add
-- Do not change the openAI model that is being used. 
-- Please use your own openAI key, but do not include it in your final submission.
-- Otherwise, you may change any code you like or add any files
+This command-line app turns a short request into a safe, five-minute story for
+ages 5-10. It uses `gpt-3.5-turbo` throughout: a lightweight router selects a
+storytelling style, a storyteller writes the draft, and an independent judge
+either approves it or returns concrete revision notes. The reader can then ask
+for changes until the story feels right.
 
----
+## Architecture
 
-## Rules
-- This assignment is open-ended
-- You may use any resources you like with the following restrictions
-   - They must be resources that would be available to you if you worked here (so no other humans, no closed AIs, no unlicensed code, etc.)
-   - Allowed resources include but not limited to Stack overflow, random blogs, chatGPT et al
-   - You have to be able to explain how the code works, even if chatGPT wrote it
-- DO NOT PUSH THE API KEY TO GITHUB. OpenAI will automatically delete it
+```mermaid
+flowchart TD
+    U[User] -->|story request| R[Category Router]
+    R -->|category label + request| S[Storyteller]
+    S -->|story draft| J[LLM Judge]
+    J -->|pass or best after max 2 revisions| O[Show Story to User]
+    J -->|fail: verdict + actionable feedback<br/>max 2 rounds| S
+    O -->|press Enter: accept| E[Finish]
+    O -->|change request + current story| S2[Storyteller Rewrite]
+    S2 -->|revised story| J2[LLM Judge Re-check]
+    J2 -->|verdict + scores + revised story| O
+```
 
----
+The router chooses one of four prompt strategies: **adventure**, **mystery**,
+**funny/silly**, or **calm bedtime**. The storyteller always enforces a
+setup → complication → gentle resolution arc, retains details from the request,
+and targets 400-600 words.
 
-## What does "tell a story" mean?
-It should be appropriate for ages 5-10. Other than that it's up to you. Here are some ideas to help get the brain-juices flowing!
-- Use story arcs to tell better stories
-- Allow the user to provide feedback or request changes
-- Categorize the request and use a tailored generation strategy for each category
+## Run it
 
----
+Python 3.10 or newer is required.
 
-## How will I be evaluated
-Good question. We want to know the following:
-- The efficacy of the system you design to create a good story
-- Are you comfortable using and writing a python script
-- What kinds of prompting strategies and agent design strategies do you use
-- Are the stories your tool creates good?
-- Can you understand and deconstruct a problem
-- Can you operate in an open-ended environment
-- Can you surprise us
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+export OPENAI_API_KEY="your-key-here"
+python main.py
+```
 
----
+The key is read only from `OPENAI_API_KEY`; it is never printed or stored. If the
+initial prompt is left blank, the app uses the included Alice-and-Bob example.
 
-## Other FAQs
-- How long should I spend on this? 
-No more than 2-3 hours
-- Can I change what the input is? 
-Sure
-- How long should the story be?
-You decide
+## Judge rubric
+
+The judge runs at temperature `0.1` and returns JSON with a 1-5 score for:
+
+1. Age appropriateness
+2. Complete story arc
+3. Engagement
+4. Fit with the routed category
+5. Safety
+
+A draft passes only when every score is at least 4. Otherwise, the storyteller
+receives the judge's specific feedback and may rewrite twice. If no version
+passes, the highest-scoring draft is shown rather than spending without limit.
+
+## Design choices
+
+- **Routing before writing:** one short classification call buys a purpose-built
+  tone and structure without burdening the user with configuration.
+- **Different temperatures:** `0.8` gives the storyteller variety; `0.0` for
+  routing and `0.1` for judging keep control decisions predictable.
+- **Bounded self-correction:** two revision rounds capture most of the benefit
+  while limiting latency, cost, and the risk of an endless agent loop.
+- **Validated judge output:** JSON mode plus local score validation makes the
+  control flow depend on a machine-checkable rubric, not free-form praise.
+- **Human in the loop:** a reader's change request is applied to the current
+  story, then judged again before it is shown.
