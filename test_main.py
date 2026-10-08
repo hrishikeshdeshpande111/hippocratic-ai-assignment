@@ -8,13 +8,16 @@ import main
 
 def fake_client(*responses: str) -> SimpleNamespace:
     queued = iter(responses)
+    requests = []
 
-    def create(**_kwargs):
+    def create(**kwargs):
+        requests.append(kwargs)
         message = SimpleNamespace(content=next(queued))
         return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     return SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+        requests=requests,
     )
 
 
@@ -59,12 +62,32 @@ class StoryPipelineTests(unittest.TestCase):
             main.route_request(fake_client("other"), "a tale"), "calm bedtime"
         )
 
+    def test_age_prompt_accepts_valid_age_and_defaults(self):
+        with patch("builtins.input", return_value=""):
+            self.assertEqual(main.prompt_for_age(), 7)
+        with patch("builtins.input", return_value="10"):
+            self.assertEqual(main.prompt_for_age(), 10)
+        with (
+            patch("builtins.input", side_effect=["eleven", "still invalid"]),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(main.prompt_for_age(), 7)
+
+    def test_judge_prompt_uses_specific_listener_age(self):
+        client = fake_client(judge_json([5, 5, 5, 5, 5, 5]))
+        main.judge_story(client, "a tale", "adventure", "A story.", 6)
+
+        prompt = client.requests[0]["messages"][1]["content"]
+        self.assertIn("for a 6-year-old", prompt)
+        self.assertNotIn("ages 5-10", prompt)
+
     def test_judge_derives_failure_from_scores_not_claimed_verdict(self):
         result = main.judge_story(
             fake_client(judge_json([5, 3, 5, 5, 5], ["Make the resolution clearer."])),
             "a tale",
             "adventure",
             "Once upon a time...",
+            7,
         )
         self.assertFalse(result.passed)
         self.assertEqual(result.scores["story_arc"], 3)
@@ -80,6 +103,7 @@ class StoryPipelineTests(unittest.TestCase):
             "a tale",
             "adventure",
             "Once upon a time...",
+            7,
             "Follow the fireflies.",
         )
         self.assertFalse(result.passed)
@@ -104,7 +128,7 @@ class StoryPipelineTests(unittest.TestCase):
         judge.side_effect = [failing, failing, failing]
 
         story, _result, revisions = main.create_judged_story(
-            object(), "a tale", "adventure", "opening", "take the bridge"
+            object(), "a tale", "adventure", "opening", "take the bridge", 7
         )
 
         self.assertEqual(revisions, 2)
@@ -142,7 +166,7 @@ class StoryPipelineTests(unittest.TestCase):
         judge.side_effect = [high_failure, passing]
 
         story, result, revisions = main.create_judged_story(
-            object(), "a tale", "adventure", "opening", "take the bridge"
+            object(), "a tale", "adventure", "opening", "take the bridge", 7
         )
 
         self.assertEqual(story, "opening\n\npassing rewrite")
@@ -153,6 +177,7 @@ class StoryPipelineTests(unittest.TestCase):
         passing = passing_result()
         with (
             patch("main.make_client", return_value=object()),
+            patch("main.prompt_for_age", return_value=7),
             patch("main.route_request", return_value="calm bedtime"),
             patch(
                 "main.generate_opening",
@@ -183,6 +208,7 @@ class StoryPipelineTests(unittest.TestCase):
             main.EXAMPLE_REQUEST,
             "calm bedtime",
             "friendlier rewrite",
+            7,
             "Path one",
         )
 
@@ -192,6 +218,7 @@ class StoryPipelineTests(unittest.TestCase):
             with self.subTest(response=response):
                 with (
                     patch("main.make_client", return_value=object()),
+                    patch("main.prompt_for_age", return_value=7),
                     patch("main.route_request", return_value="calm bedtime"),
                     patch(
                         "main.generate_opening",
@@ -226,6 +253,7 @@ class StoryPipelineTests(unittest.TestCase):
             with self.subTest(request=request):
                 with (
                     patch("main.make_client", return_value=object()),
+                    patch("main.prompt_for_age", return_value=7),
                     patch("main.route_request", return_value="calm bedtime"),
                     patch(
                         "main.generate_opening",
@@ -259,6 +287,7 @@ class StoryPipelineTests(unittest.TestCase):
             fake_client('{"choices": [" Follow the fireflies. ", "Ask the owl."]}'),
             "opening\nDECISION: Which path?",
             "adventure",
+            7,
         )
         self.assertEqual(valid, ["Follow the fireflies.", "Ask the owl."])
 
@@ -273,6 +302,7 @@ class StoryPipelineTests(unittest.TestCase):
                     fake_client(malformed),
                     "opening\nDECISION: Which path?",
                     "adventure",
+                    7,
                 )
                 self.assertEqual(choices, list(main.DEFAULT_CHOICES))
 
@@ -281,7 +311,7 @@ class StoryPipelineTests(unittest.TestCase):
             "main.call_model",
             return_value='{"choices": ["Climb.", "Wait."]}',
         ) as model:
-            main.generate_choices(object(), "An opening.", "adventure")
+            main.generate_choices(object(), "An opening.", "adventure", 7)
 
         prompt = model.call_args.args[1][1]["content"]
         self.assertIn("<first choice>", prompt)
@@ -364,6 +394,7 @@ class StoryPipelineTests(unittest.TestCase):
             "adventure",
             "fixed opening",
             "Follow the fireflies.",
+            7,
         )
 
         self.assertEqual(story, "fixed opening\n\nending honors choice")
@@ -381,6 +412,7 @@ class StoryPipelineTests(unittest.TestCase):
     def test_decision_metadata_is_never_displayed(self):
         with (
             patch("main.make_client", return_value=object()),
+            patch("main.prompt_for_age", return_value=7),
             patch("main.route_request", return_value="adventure"),
             patch(
                 "main.generate_opening",
@@ -410,6 +442,7 @@ class StoryPipelineTests(unittest.TestCase):
     def test_hero_metadata_names_the_choice_prompt(self):
         with (
             patch("main.make_client", return_value=object()),
+            patch("main.prompt_for_age", return_value=7),
             patch("main.route_request", return_value="adventure"),
             patch(
                 "main.generate_opening",

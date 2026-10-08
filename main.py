@@ -18,6 +18,10 @@ from openai import OpenAI, OpenAIError
 
 MODEL = "gpt-3.5-turbo"
 CATEGORIES = ("adventure", "mystery", "funny/silly", "calm bedtime")
+AGE_MIN, AGE_MAX = 5, 10
+DEFAULT_AGE = 7
+AGE_GUIDANCE = ("For ages 5-6 use very short sentences and simple words; for 7-8 "
+                "use natural read-aloud prose; for 9-10 richer vocabulary is fine.")
 RUBRIC = ("age_appropriateness", "story_arc", "engagement", "category_fit",
           "safety", "choice_honored")
 MAX_REVISION_ROUNDS = 2
@@ -88,13 +92,26 @@ def route_request(client: OpenAI, request: str) -> str:
     return next((item for item in CATEGORIES if item in category), "calm bedtime")
 
 
-def generate_opening(client: OpenAI, request: str, category: str) -> str:
+def prompt_for_age() -> int:
+    for attempt in range(2):
+        prompt = "How old is the listener? (5-10, or press Enter for 7): "
+        answer = input(prompt).strip()
+        if not answer:
+            return DEFAULT_AGE
+        if answer.isdigit() and AGE_MIN <= int(answer) <= AGE_MAX:
+            return int(answer)
+        if attempt == 0:
+            print("Please enter an age from 5 to 10.")
+    return DEFAULT_AGE
+
+
+def generate_opening(client: OpenAI, request: str, category: str, age: int) -> str:
     prompt = f"""Write only the setup and complication of an interactive bedtime
-story for ages 5-10. Write 200-300 words; do not end before 200. Use 4-6 paragraphs.
-Open with a sensory detail, establish a likable hero and want, then grow one
-surprising, non-frightening problem from the user's details. Stop at a meaningful
-decision with two possible safe actions. Do not solve the problem, list choices,
-or use headings such as Setup or Complication. Preserve supplied names, animals,
+story. The listener is {age} years old. {AGE_GUIDANCE} Write 200-300 words; do not
+end before 200. Use 4-6 paragraphs. Open with a sensory detail, establish a
+likable hero and want, then grow one surprising, non-frightening problem from
+the user's details. Stop at a meaningful decision with two possible safe actions.
+Do not solve the problem, list choices, or use headings. Preserve names, animals,
 and settings. Include no violence, cruelty, romance, fear, or unsafe behavior.
 Style: {category}. {STYLE_GUIDANCE[category]}
 End with exactly two non-story lines in this form:
@@ -105,12 +122,12 @@ Do not add a metadata heading. Return only the opening and these two lines."""
     return call_model(client, messages, 0.8, 700)
 
 
-def generate_choices(client: OpenAI, opening: str, category: str) -> list[str]:
+def generate_choices(client: OpenAI, opening: str, category: str, age: int) -> list[str]:
     prompt = f"""Create exactly two choices for this interactive children's story.
-They must directly answer the DECISION, use clearly different approaches, and
-give the hero meaningful agency. Both must be safe, kind, plausible, leadable to
-a gentle resolution, and simple enough for ages 5-10. Start each with a verb;
-do not number or label them, reveal outcomes, or break the {category!r} tone.
+They must answer the DECISION with clearly different approaches and give the hero
+meaningful agency. Both must be safe, kind, plausible, leadable to a gentle
+resolution, and simple enough for a {age}-year-old. Start each with a verb; do not
+number or label them, reveal outcomes, or break the {category!r} tone.
 Return only valid JSON in this shape: {{"choices": ["<first choice>", "<second choice>"]}}.
 Invent both choices yourself; never output the placeholder text.
 {opening}"""
@@ -161,15 +178,16 @@ def generate_ending(
     choice: str,
     request: str,
     category: str,
+    age: int,
     previous_ending: str | None = None,
     revision_instructions: str | None = None,
 ) -> str:
-    prompt = f"""Write only the 200-300 word continuation and gentle resolution
-of this bedtime story for ages 5-10. Continue without recapping. The chosen action
-must visibly cause a consequence, discovery, or act of teamwork unique to its
-path. Resolve the central problem, echo one opening detail, and end on a warm
-image. Do not introduce new characters, treasures, or subplots — the resolution
-must be caused by the chosen action, and the final image must reference it.
+    prompt = f"""Write only the 200-300 word continuation and gentle resolution.
+The listener is {age} years old. {AGE_GUIDANCE} Continue without recapping. The
+chosen action must visibly cause a consequence, discovery, or act of teamwork
+unique to its path. Resolve the problem, echo one opening detail, and end warmly.
+Do not introduce new characters, treasures, or subplots — the resolution must be
+caused by the chosen action, and the final image must reference it.
 Use natural, simple prose with no headings, new choice, violence, fear,
 romance, cruelty, unsafe behavior, or prompt discussion.
 Style: {category}. {STYLE_GUIDANCE[category]}"""
@@ -182,29 +200,26 @@ Style: {category}. {STYLE_GUIDANCE[category]}"""
         context.append(f"Ending to improve:\n{previous_ending}")
     if revision_instructions:
         context.append(f"Revise only the ending using this feedback:\n{revision_instructions}")
-    return call_model(
-        client,
-        [{"role": "system", "content": prompt}, {"role": "user", "content": "\n\n".join(context)}],
-        0.8,
-        700,
-    )
+    messages = [{"role": "system", "content": prompt},
+                {"role": "user", "content": "\n\n".join(context)}]
+    return call_model(client, messages, 0.8, 700)
 
 
 def generate_story(
     client: OpenAI,
     request: str,
     category: str,
+    age: int,
     previous_story: str,
     revision_instructions: str,
 ) -> str:
-    prompt = f"""Rewrite this complete 400-600 word bedtime story for ages 5-10.
-Apply the user's change while preserving supplied details and the setup,
+    prompt = f"""Rewrite this complete 400-600 word bedtime story for a listener
+who is {age} years old. {AGE_GUIDANCE} Apply the user's change while preserving
+supplied details and the setup,
 complication, and gentle resolution. Use clear prose with no violence, fear,
 romance, cruelty, or unsafe behavior. End positively.
 Style: {category}. {STYLE_GUIDANCE[category]}
-
 Original request:\n{request}\n\nStory:\n{previous_story}
-
 Requested change:\n{revision_instructions}"""
     return call_model(client, [{"role": "system", "content": prompt}], 0.8, 1_200)
 
@@ -214,10 +229,11 @@ def judge_story(
     request: str,
     category: str,
     story: str,
+    age: int,
     chosen_path: str = "No explicit reader choice was supplied.",
 ) -> JudgeResult:
     prompt = f"""Score this children's story from 1 (poor) to 5 (excellent) on:
-- age_appropriateness: safe, understandable language and themes for ages 5-10
+- age_appropriateness: safe, understandable language and themes for a {age}-year-old
 - story_arc: setup, complication, and gentle resolution are all present
 - engagement: vivid, fun, and likely to hold a child's attention
 - category_fit: matches the {category!r} tone
@@ -230,18 +246,9 @@ actionable feedback tied to weak criteria. Return only valid JSON:
 "engagement":1,"category_fit":1,"safety":1,"choice_honored":1}},
 "feedback":["specific edit"]}}
 Request: {request}\nChosen path: {chosen_path}\n\nStory:\n{story}"""
-    data = json.loads(
-        call_model(
-            client,
-            [
-                {"role": "system", "content": "Be a strict children's-story editor."},
-                {"role": "user", "content": prompt},
-            ],
-            0.1,
-            500,
-            True,
-        )
-    )
+    messages = [{"role": "system", "content": "Be a strict children's-story editor."},
+                {"role": "user", "content": prompt}]
+    data = json.loads(call_model(client, messages, 0.1, 500, True))
     raw_scores = data.get("scores", {})
     scores = {name: raw_scores.get(name) for name in RUBRIC}
     if any(type(score) is not int or not 1 <= score <= 5 for score in scores.values()):
@@ -256,11 +263,11 @@ Request: {request}\nChosen path: {chosen_path}\n\nStory:\n{story}"""
 
 
 def create_judged_story(
-    client: OpenAI, request: str, category: str, opening: str, choice: str
+    client: OpenAI, request: str, category: str, opening: str, choice: str, age: int
 ) -> tuple[str, JudgeResult, int]:
-    ending = generate_ending(client, opening, choice, request, category)
+    ending = generate_ending(client, opening, choice, request, category, age)
     story = f"{opening}\n\n{ending}"
-    result = judge_story(client, request, category, story, choice)
+    result = judge_story(client, request, category, story, age, choice)
     best_story, best_result = story, result
     revisions = 0
     while not result.passed and revisions < MAX_REVISION_ROUNDS:
@@ -271,11 +278,12 @@ def create_judged_story(
             choice,
             request,
             category,
+            age,
             ending,
             "\n".join(f"- {item}" for item in result.feedback),
         )
         story = f"{opening}\n\n{ending}"
-        result = judge_story(client, request, category, story, choice)
+        result = judge_story(client, request, category, story, age, choice)
         if result.passed or result.total > best_result.total:
             best_story, best_result = story, result
     return best_story, best_result, revisions
@@ -283,6 +291,7 @@ def create_judged_story(
 
 def run() -> None:
     client = make_client()
+    age = prompt_for_age()
     request = input("What kind of story do you want to hear? ").strip()
     if not request:
         request = EXAMPLE_REQUEST
@@ -291,13 +300,15 @@ def run() -> None:
     print(f"\nRouted as: {category}")
     if any(re.search(pattern, request.casefold()) for pattern in SAFETY_TRIGGERS):
         print(SAFETY_ACKNOWLEDGMENT)
-    raw_opening = generate_opening(client, request, category)
+    raw_opening = generate_opening(client, request, category, age)
     match = re.search(r"(?im)^\s*DECISION:\s*(.+?)\s*$", raw_opening)
     dilemma = match.group(1) if match else "How should the hero solve the problem?"
     hero_match = re.search(r"(?im)^\s*HERO:\s*(.+?)\s*$", raw_opening)
     hero = hero_match.group(1) if hero_match else "the hero"
     opening = re.sub(r"(?im)^\s*(?:metadata:|(?:DECISION|HERO):\s*.+?)\s*$", "", raw_opening).strip()
-    choices = generate_choices(client, f"{opening}\n\nDECISION: {dilemma}", category)
+    choices = generate_choices(
+        client, f"{opening}\n\nDECISION: {dilemma}", category, age
+    )
     print(f"\n{opening}\n")
     choice = prompt_for_choice(hero, choices)
     if choice is None:
@@ -305,7 +316,7 @@ def run() -> None:
         return
 
     story, result, revisions = create_judged_story(
-        client, request, category, opening, choice
+        client, request, category, opening, choice, age
     )
     print(f"Judge: {result.summary()} (automatic revisions: {revisions})")
     print(f"\n{story.removeprefix(opening).strip()}\n")
@@ -322,10 +333,11 @@ def run() -> None:
             client,
             request,
             category,
+            age,
             previous_story=story,
             revision_instructions=change,
         )
-        result = judge_story(client, request, category, story, choice)
+        result = judge_story(client, request, category, story, age, choice)
         print(f"\nJudge: {result.summary()}")
         if result.feedback:
             print("Editor note: " + " ".join(result.feedback))
