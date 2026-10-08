@@ -24,7 +24,7 @@ flowchart TD
     P -->|chosen path + fixed opening| F[Resolution Storyteller]
     F -->|complete story| J[LLM Judge]
     J -->|fail: verdict + feedback<br/>max 2 ending revisions| F
-    J -->|pass or best ending| O[Show Resolution]
+    J -->|pass or best ending| O[Show Story Output]
     O -->|Enter, no, n, done, quit, or exit| E
     O -->|change request + complete story| S2[Full Story Rewrite]
     S2 -->|revised complete story| J2[LLM Judge Re-check]
@@ -98,8 +98,8 @@ passes, the highest-scoring draft is shown rather than spending without limit.
 
 - **Routing before writing:** one short classification call buys a purpose-built
   tone and structure without burdening the user with configuration.
-- **Different temperatures:** `0.8` gives the storyteller variety; `0.0` for
-  routing and `0.1` for judging keep control decisions predictable.
+- **Different temperatures:** `0.8` gives the storyteller variety and `0.7`
+  keeps choices creative; `0.0` routing and `0.1` judging stay predictable.
 - **Bounded self-correction:** two revision rounds capture most of the benefit
   while limiting latency, cost, and the risk of an endless agent loop. Only the
   unseen ending is revised, so the interaction remains narratively consistent.
