@@ -355,6 +355,7 @@ class StoryPipelineTests(unittest.TestCase):
                 "main.generate_opening",
                 return_value=(
                     "Alice reached the moonlit fork.\n"
+                    "metadata:\n"
                     "DECISION: Should Alice follow the lights or ask the owl?"
                 ),
             ),
@@ -371,6 +372,7 @@ class StoryPipelineTests(unittest.TestCase):
             for argument in printed_call.args
         )
         self.assertNotIn("DECISION:", displayed)
+        self.assertNotIn("metadata:", displayed)
         self.assertIn("Alice reached the moonlit fork.", displayed)
         create_story.assert_not_called()
 
